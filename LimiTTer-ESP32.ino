@@ -94,7 +94,7 @@ const int NFCPin3 = 21; // Power pin BM019
 const int NFCPin4 = 22; // Power pin BM019
 const int MOSIPin = 23;
 const int SCKPin = 19;
-unsigned long boottime;
+//unsigned long boottime;
 unsigned long sleeptime;
 RTC_DATA_ATTR int bootCount = 0;
 RTC_DATA_ATTR byte FirstRun = 1;
@@ -146,21 +146,7 @@ class CharacteristicUART : public BLECharacteristicCallbacks
 
 void setup() {
 //    boottime = millis();
-    pinMode(IRQPin, OUTPUT);
-    digitalWrite(IRQPin, HIGH); 
-    pinMode(SSPin, OUTPUT);
-    digitalWrite(SSPin, HIGH);
-    pinMode(NFCPin1, OUTPUT);
-    pinMode(NFCPin2, OUTPUT);
-    pinMode(NFCPin3, OUTPUT);
-    pinMode(NFCPin4, OUTPUT);
-    digitalWrite(NFCPin1, HIGH);
-    digitalWrite(NFCPin2, HIGH);
-    digitalWrite(NFCPin3, HIGH);
-    digitalWrite(NFCPin4, HIGH);
-
-    pinMode(MOSIPin, OUTPUT);
-    pinMode(SCKPin, OUTPUT);
+    BM19PowerOn();
 
     Serial.begin(9600);
 #ifdef ESP32
@@ -182,27 +168,10 @@ void setup() {
   pServer->getAdvertising()->start();
   //BLEAdvertising *pAdvertising = pServer->getAdvertising();
   //pAdvertising->start();
-  Serial.println("UART Over BLE start advertising");
-  Serial.println("UART Over BLE wait connection");
-    for (int i=0; ( (i < MAX_BLE_WAIT) && !estConnecte ); i++)
-    {
-      delay(1000);
-      Serial.println("Waiting for BLE connection ...");
-    }
+  //Serial.println("UART Over BLE start advertising");
 #endif
 
-    SPI.setDataMode(SPI_MODE0);
-    SPI.setBitOrder(MSBFIRST);
-    SPI.setClockDivider(SPI_CLOCK_DIV128);
-    SPI.begin();
 
-    delay(10);                      // send a wake up
-    digitalWrite(IRQPin, LOW);      // pulse to put the 
-    delayMicroseconds(100);         // BM019 into SPI
-    digitalWrite(IRQPin, HIGH);     // mode 
-    delay(10);
-    digitalWrite(IRQPin, LOW);
-    
      //Increment boot number and print it every reboot
 ////    ++bootCount;
 ////    Serial.println("Boot number: " + String(bootCount));
@@ -218,6 +187,50 @@ void Shift_RXBuf(int LastLSb) {
   }
 }
 #endif
+
+void BM19PowerOn()
+{
+    pinMode(IRQPin, OUTPUT);
+    digitalWrite(IRQPin, HIGH); 
+    pinMode(SSPin, OUTPUT);
+    digitalWrite(SSPin, HIGH);
+    pinMode(NFCPin1, OUTPUT);
+    pinMode(NFCPin2, OUTPUT);
+    pinMode(NFCPin3, OUTPUT);
+    pinMode(NFCPin4, OUTPUT);
+    digitalWrite(NFCPin1, HIGH);
+    digitalWrite(NFCPin2, HIGH);
+    digitalWrite(NFCPin3, HIGH);
+    digitalWrite(NFCPin4, HIGH);
+
+    pinMode(MOSIPin, OUTPUT);
+    pinMode(SCKPin, OUTPUT);
+
+    SPI.setDataMode(SPI_MODE0);
+    SPI.setBitOrder(MSBFIRST);
+    SPI.setClockDivider(SPI_CLOCK_DIV128);
+    SPI.begin();
+
+    delay(10);                      // send a wake up
+    digitalWrite(IRQPin, LOW);      // pulse to put the 
+    delayMicroseconds(100);         // BM019 into SPI
+    digitalWrite(IRQPin, HIGH);     // mode 
+    delay(10);
+    digitalWrite(IRQPin, LOW);
+    
+}
+
+void BM19PowerOff()
+{
+ SPI.end();
+ digitalWrite(MOSIPin, LOW);
+ digitalWrite(SCKPin, LOW);
+ digitalWrite(NFCPin1, LOW); // Turn off all power sources completely
+ digitalWrite(NFCPin2, LOW); // for maximum power save on BM019.
+ digitalWrite(NFCPin3, LOW);
+ digitalWrite(NFCPin4, LOW);
+ digitalWrite(IRQPin, LOW);
+}
 
 void poll_NFC_UntilResponsIsReady()
 {
@@ -403,62 +416,15 @@ Serial.println("Read Memory");
   } while( (readError) && (readTry < MAX_NFC_READTRIES) );
   
  }
-  readTry = 0;
-  do {
-  readError = 0;  
-  digitalWrite(SSPin, LOW);
-  SPI.transfer(0x00);  // SPI control byte to send command to CR95HF
-  SPI.transfer(0x04);  // Send Receive CR95HF command
-  SPI.transfer(0x03);  // length of data that follows
-  SPI.transfer(0x02);  // request Flags byte
-  SPI.transfer(0x20);  // Read Single Block command for ISO/IEC 15693
-  SPI.transfer(39);  // memory block address
-  digitalWrite(SSPin, HIGH);
-  delay(10);
- 
-  poll_NFC_UntilResponsIsReady();
-
-  receive_NFC_Response();
-
- if (RXBuffer[0] != 0x80)
-     readError = 1;  
-  
- for (int i = 0; i < 8; i++)
-   oneBlock[i] = RXBuffer[i+3];
-    
-  char str[24];
-  unsigned char * pin = oneBlock;
-  const char * hex = "0123456789ABCDEF";
-  char * pout = str;
-  for(; pin < oneBlock+8; pout+=2, pin++) {
-      pout[0] = hex[(*pin>>4) & 0xF];
-      pout[1] = hex[ *pin     & 0xF];
-  }
-  pout[0] = 0;
-  if (!readError) {
-    Serial.println("Bloc 39 : " + String(str));
-    elapsedMinutes += str;
-  }
-  readTry++;
-  } while( (readError) && (readTry < MAX_NFC_READTRIES) );
-
-//Serial.println("ElapsedMinutes " + elapsedMinutes);
-//Serial.println("trendValues " + trendValues);
       
   if (!readError)
     {
-      hexMinutes = elapsedMinutes.substring(10,12) + elapsedMinutes.substring(8,10);
-      hexPointer = trendValues.substring(4,6);
-//      sensorMinutesElapse = strtoul(hexMinutes.c_str(), NULL, 16);
-//      glucosePointer = strtoul(hexPointer.c_str(), NULL, 16);
-
       sensorMinutesElapse = (NfcMem[NFCSENSORTIMEPOINTER+1]<<8) + NfcMem[NFCSENSORTIMEPOINTER];
       glucosePointer = NfcMem[NFC15MINPOINTER];
       histoPointer=NfcMem[NFC8HOURPOINTER];
 
-Serial.println("hexMinutes : " + hexMinutes + " " + String(sensorMinutesElapse));
-Serial.println("Glucose Pointer  : " + String(glucosePointer));
-Serial.println("Histo Pointer  : " + String(histoPointer));
+    Serial.println("Glucose Pointer  : " + String(glucosePointer));
+    Serial.println("Histo Pointer  : " + String(histoPointer));
 
     float MeanTrend=0;
     float PenteFinale;
@@ -466,7 +432,6 @@ Serial.println("Histo Pointer  : " + String(histoPointer));
 
      for (int j=0; j<16; j++) {     
          raw = (NfcMem[NFC15MINADDRESS + 1 + ((glucosePointer+15-j)%16)*6]<<8) + NfcMem[NFC15MINADDRESS + ((glucosePointer+15-j)%16)*6];
-//         trend[15-j] = Glucose_Reading((NfcMem[NFC15MINADDRESS + 1 + ((glucosePointer+j)%16)*6]<<8) + NfcMem[NFC15MINADDRESS + ((glucosePointer+j)%16)*6]) ;
         trend[j] = Glucose_Reading(raw) ;
         Serial.println("Tendance " + String((j+1)) + "minutes : " + String(trend[j]) + " Raw : " + String(raw));
         MeanTrend+=trend[j];
@@ -505,51 +470,6 @@ Serial.println("Histo Pointer  : " + String(histoPointer));
     if (lastGlucose != currentGlucose) // Reset the counter
       noDiffCount = 0;
     
-/*    
-       
-    if (((lastGlucose - currentGlucose) > 50) || ((currentGlucose - lastGlucose) > 50))
-    {
-       if (((lastGlucose - trendOneGlucose) > 50) || ((trendOneGlucose - lastGlucose) > 50))
-          currentGlucose = trendTwoGlucose;
-       else
-          currentGlucose = trendOneGlucose;
-    }
-
-    for (int i=0; i<16; i++)
-    {
-      if (((lastGlucose - trend[i]) > 50) || ((trend[i] - lastGlucose) > 50)) // invalid trend check
-         continue;
-      else
-      {
-         validTrend[validTrendCounter] = trend[i];
-         validTrendCounter++;
-      }
-    }
-
-    if (validTrendCounter > 0)
-    { 
-      for (int i=0; i < validTrendCounter; i++)
-         averageGlucose += validTrend[i];
-         
-      averageGlucose = averageGlucose / validTrendCounter;
-      
-      if (((lastGlucose - currentGlucose) > 50) || ((currentGlucose - lastGlucose) > 50))
-         shownGlucose = averageGlucose; // If currentGlucose is still invalid take the average value
-      else
-         shownGlucose = currentGlucose; // All went well. Take and show the current value
-    }
-    else
-      shownGlucose = currentGlucose; // If all is going wrong, nevertheless take and show a value 
-
-    if ((lastGlucose == currentGlucose) && (sensorMinutesElapse > 21000)) // Expired sensor check
-      noDiffCount++;
-
-    if (lastGlucose != currentGlucose) // Reset the counter
-      noDiffCount = 0;
-
-    if (currentGlucose != 0)
-      lastGlucose = currentGlucose; 
-*/
     
     NFCReady = 2;
     FirstRun = 0;
@@ -604,7 +524,6 @@ String Build_Packet(float glucose) {
       Serial.print("Sensor lifetime: ");
       Serial.print(sensorMinutesElapse);
       Serial.println(" minutes elapsed");
-      Serial.println("Packet sent : " + packet);
       return packet;
 }
 
@@ -612,12 +531,20 @@ void Send_Packet(String packet) {
    if ((packet.substring(0,1) != "0"))
     {
 #ifdef ESP32
+      Serial.println("UART Over BLE wait connection");
+      for (int i=0; ( (i < MAX_BLE_WAIT) && !estConnecte ); i++)
+      {
+        delay(1000);
+        Serial.println("Waiting for BLE connection ...");
+      }
       int Packet_Size = packet.length() + 1;
       char BlePacket[Packet_Size];
       packet.toCharArray(BlePacket, Packet_Size);
       pTxCharacteristic->setValue(BlePacket);
-      pTxCharacteristic->notify();     
+      pTxCharacteristic->notify();  
+   
 #endif      
+      Serial.println("Packet sent : " + packet);
       delay(500);
     }
    else
@@ -630,18 +557,10 @@ void Send_Packet(String packet) {
   }
 
 void goToSleep() {
- 
- SPI.end();
- digitalWrite(MOSIPin, LOW);
- digitalWrite(SCKPin, LOW);
- digitalWrite(NFCPin1, LOW); // Turn off all power sources completely
- digitalWrite(NFCPin2, LOW); // for maximum power save on BM019.
- digitalWrite(NFCPin3, LOW);
- digitalWrite(NFCPin4, LOW);
- digitalWrite(IRQPin, LOW);
+
 #ifdef ESP32
  sleeptime = millis();
- esp_sleep_enable_timer_wakeup(SLEEP_TIME - (sleeptime-boottime)*1000);
+ esp_sleep_enable_timer_wakeup(SLEEP_TIME - sleeptime*1000);
  esp_deep_sleep_start();
 #else
   delay(30000);
@@ -651,17 +570,7 @@ void goToSleep() {
   digitalWrite(NFCPin3, HIGH);
   digitalWrite(NFCPin4, HIGH);
 
-  SPI.setDataMode(SPI_MODE0);
-  SPI.setBitOrder(MSBFIRST);
-  SPI.setClockDivider(SPI_CLOCK_DIV128);
-  SPI.begin();
-
-  delay(10);                      // send a wake up
-  digitalWrite(IRQPin, LOW);      // pulse to put the 
-  delayMicroseconds(100);         // BM019 into SPI
-  digitalWrite(IRQPin, HIGH);     // mode 
-  delay(10);
-  digitalWrite(IRQPin, LOW);
+  BM19PowerOn();
   NFCReady = 0;
 #endif
 
@@ -682,15 +591,17 @@ batteryPcnt=100;
       Inventory_Command(); // sensor in range?
       if (NFCReady == 2)
         break;
-      delay(1000);
+      delay(100);
     }
     if (NFCReady == 1) {
+      BM19PowerOff();
       goToSleep();
     }
   }
   else
   {
     String xdripPacket = Build_Packet(Read_Memory());
+    BM19PowerOff();
     Send_Packet(xdripPacket);
     goToSleep();
   }
