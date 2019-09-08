@@ -316,8 +316,11 @@ void Inventory_Command() {
 
   poll_NFC_UntilResponsIsReady();
   receive_NFC_Response();
+//  Serial.println("RxBuf 0 : " + String(RXBuffer[0]));
+//  Serial.println("RxBuf 1 : " + String(RXBuffer[1]));
+  
 
-  if (RXBuffer[0] == 0x80 && RXBuffer[1] == 13 )  // is response code good?
+  if (RXBuffer[0] == 0x80 )  // is response code good?
     {
 
 #ifdef PRINTMEM  
@@ -368,11 +371,7 @@ Serial.println("Read Memory");
  byte readError = 0;
  int readTry;
  
-#ifdef PRINTMEM    
  for ( int b = 3; b < 40; b++) {
-#else
- for ( int b = 3; b < 16; b++) {
-#endif
   readTry = 0;
   do {
     readError = 0;   
@@ -393,25 +392,9 @@ Serial.println("Read Memory");
        readError = 1;  
     
    for (int i = 0; i < 8; i++) {
-     oneBlock[i] = RXBuffer[i+3];
+//     oneBlock[i] = RXBuffer[i+3];
      NfcMem[8*b+i]=RXBuffer[i+3];
    }
-    char str[24];
-    unsigned char * pin = oneBlock;
-    const char * hex = "0123456789ABCDEF";
-    char * pout = str;
-    for(; pin < oneBlock+8; pout+=2, pin++) {
-        pout[0] = hex[(*pin>>4) & 0xF];
-        pout[1] = hex[ *pin     & 0xF];
-    }
-    pout[0] = 0;
-    if (!readError)       // is response code good?
-    { 
-#ifdef PRINTMEM  
-//      Serial.println(String(str) + " Bloc " + String(b));
-#endif      
-      trendValues += str;
-    }
     readTry++;
   } while( (readError) && (readTry < MAX_NFC_READTRIES) );
   
@@ -422,10 +405,10 @@ Serial.println("Read Memory");
       sensorMinutesElapse = (NfcMem[NFCSENSORTIMEPOINTER+1]<<8) + NfcMem[NFCSENSORTIMEPOINTER];
       glucosePointer = NfcMem[NFC15MINPOINTER];
       histoPointer=NfcMem[NFC8HOURPOINTER];
-
+#ifdef PRINTMEM
     Serial.println("Glucose Pointer  : " + String(glucosePointer));
     Serial.println("Histo Pointer  : " + String(histoPointer));
-
+#endif
     float MeanTrend=0;
     float PenteFinale;
 
@@ -433,17 +416,19 @@ Serial.println("Read Memory");
      for (int j=0; j<16; j++) {     
          raw = (NfcMem[NFC15MINADDRESS + 1 + ((glucosePointer+15-j)%16)*6]<<8) + NfcMem[NFC15MINADDRESS + ((glucosePointer+15-j)%16)*6];
         trend[j] = Glucose_Reading(raw) ;
+#ifdef PRINTMEM
         Serial.println("Tendance " + String((j+1)) + "minutes : " + String(trend[j]) + " Raw : " + String(raw));
+#endif        
         MeanTrend+=trend[j];
      }
     MeanTrend = MeanTrend/16;
 
+#ifdef PRINTMEM
     for (int j=0; j<32;j++) {
       raw = (NfcMem[NFC8HOURADDRESS + 1 + ((histoPointer+31-j)%32)*6]<<8) + NfcMem[NFC8HOURADDRESS + ((histoPointer+31-j)%32)*6];
       Serial.println("Tendance " + String((j+1)/4) + "h"+ String((j*15+15)%60) + "min : " + String(Glucose_Reading(raw)) + " Raw : " + String(raw));
     }
-
-
+#endif        
        
    float SigmaY = 0 ;
    for (int i = 0 ; i < 16 ; i++) { // Calcul droite avec regression des moindres carrés
@@ -454,7 +439,7 @@ Serial.println("Read Memory");
    // y = A x + B avec A = SigmaY/SigmaX et B =MoyenneY - A MoyenneX
    // Valeur renvoyée correspond à l'estimation pour x = 0, la valeur courante lue est remplacée par son estimation selon la droite des moindres carrés
 
-   shownGlucose = MeanTrend - 7.5 * SigmaY/340;
+    shownGlucose = MeanTrend - 7.5 * SigmaY/340;
 
     currentGlucose = trend[0];
 
@@ -510,16 +495,6 @@ String Build_Packet(float glucose) {
       packet += String(sensorMinutesElapse);
       Serial.print("Glucose level: ");
       Serial.println(glucose);
-      /*
-      Serial.println("15 minutes-trend: ");
-      for (int i=0; i<16; i++)
-      {
-        Serial.println(String(trend[i]));
-      }
-      Serial.print("Battery level: ");
-      Serial.print(batteryPcnt);
-      Serial.println("%");
-      */
       delay(100);
       Serial.print("Sensor lifetime: ");
       Serial.print(sensorMinutesElapse);
@@ -537,22 +512,28 @@ void Send_Packet(String packet) {
         delay(1000);
         Serial.println("Waiting for BLE connection ...");
       }
-      int Packet_Size = packet.length() + 1;
-      char BlePacket[Packet_Size];
-      packet.toCharArray(BlePacket, Packet_Size);
-      pTxCharacteristic->setValue(BlePacket);
-      pTxCharacteristic->notify();  
-   
+      if(estConnecte) {
+        int Packet_Size = packet.length() + 1;
+        char BlePacket[Packet_Size];
+        packet.toCharArray(BlePacket, Packet_Size);
+        pTxCharacteristic->setValue(BlePacket);
+        pTxCharacteristic->notify();  
+        delay(10);
+        Serial.println("Packet sent : " + packet);
+        pTxCharacteristic->setValue(BlePacket);
+        pTxCharacteristic->notify();  
+      } else {
+        Serial.println("Pb BLE connection, Packet not sent : " + packet);
+      }
 #endif      
-      Serial.println("Packet sent : " + packet);
-      delay(500);
+      delay(100);
     }
    else
     {
       Serial.println("");
       Serial.print("Packet not sent! Maybe a corrupt scan or an expired sensor.");
       Serial.println("");
-      delay(500);
+      delay(100);
     }
   }
 
@@ -560,7 +541,7 @@ void goToSleep() {
 
 #ifdef ESP32
  sleeptime = millis();
- esp_sleep_enable_timer_wakeup(SLEEP_TIME - sleeptime*1000);
+ esp_sleep_enable_timer_wakeup(SLEEP_TIME - sleeptime*1000+1598000);
  esp_deep_sleep_start();
 #else
   delay(30000);
