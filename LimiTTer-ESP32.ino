@@ -516,12 +516,14 @@ void Send_Packet(String packet) {
         int Packet_Size = packet.length() + 1;
         char BlePacket[Packet_Size];
         packet.toCharArray(BlePacket, Packet_Size);
+        delay(100); // small delay before sending first packet
         pTxCharacteristic->setValue(BlePacket);
         pTxCharacteristic->notify();  
-        delay(10);
         Serial.println("Packet sent : " + packet);
+        delay(1000); // Send packet twice to avoid missing packet
         pTxCharacteristic->setValue(BlePacket);
         pTxCharacteristic->notify();  
+        Serial.println("Packet sent : " + packet);
       } else {
         Serial.println("Pb BLE connection, Packet not sent : " + packet);
       }
