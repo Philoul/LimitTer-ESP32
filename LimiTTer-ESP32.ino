@@ -31,6 +31,7 @@
 #define PRINTMEM
 
 #include <SPI.h>
+#include "ArduinoSort.h"
 //#include <SoftwareSerial.h>
 #ifdef ESP32
 //#include "BluetoothSerial.h" //Header File for Serial Bluetooth, will be added by default into Arduino
@@ -57,7 +58,7 @@
 #define NFC15MINADDRESS 28  // 0x1C
 #define NFC8HOURADDRESS 124 // 0x64
 #define NFCSENSORTIMEPOINTER  316 // 0x13C et 0x13D
-
+#define NBEXRAW  5 // Exclus les NBEXRAW valeur dont l'écart type est maximal par rapport à la droite des moindres carré
 byte RXBuffer[RXBUFSIZE];
 byte NfcMem[NFCMEMSIZE];
 
@@ -68,7 +69,8 @@ long batteryMv;
 int noDiffCount = 0;
 int sensorMinutesElapse;
 float trend[16];
-
+float A = 0;
+float B = 0;
 
 
 #ifdef ESP8266
@@ -353,23 +355,14 @@ void Inventory_Command() {
  
 float Read_Memory() {
 Serial.println("Read Memory");
- byte oneBlock[8];
- String hexPointer = "";
- String trendValues = "";
- String hexMinutes = "";
- String elapsedMinutes = "";
- float trendOneGlucose;
- float trendTwoGlucose;
  float currentGlucose;
  float shownGlucose;
- float averageGlucose = 0;
  int glucosePointer;
  int histoPointer;
- int validTrendCounter = 0;
  int raw;
- float validTrend[16];
  byte readError = 0;
  int readTry;
+ int valididx[16];
  
  for ( int b = 3; b < 40; b++) {
   readTry = 0;
@@ -392,7 +385,6 @@ Serial.println("Read Memory");
        readError = 1;  
     
    for (int i = 0; i < 8; i++) {
-//     oneBlock[i] = RXBuffer[i+3];
      NfcMem[8*b+i]=RXBuffer[i+3];
    }
     readTry++;
@@ -409,41 +401,77 @@ Serial.println("Read Memory");
     Serial.println("Glucose Pointer  : " + String(glucosePointer));
     Serial.println("Histo Pointer  : " + String(histoPointer));
 #endif
-    float MeanTrend=0;
-    float PenteFinale;
-
+    float SigmaX=0;
+    float SigmaY=0;
+    float SigmaX2=0;
+    float SigmaXY=0;
+    int n = 0;
 
      for (int j=0; j<16; j++) {     
          raw = (NfcMem[NFC15MINADDRESS + 1 + ((glucosePointer+15-j)%16)*6]<<8) + NfcMem[NFC15MINADDRESS + ((glucosePointer+15-j)%16)*6];
         trend[j] = Glucose_Reading(raw) ;
+        valididx[j] = j;
+        SigmaX+=j;
+        SigmaXY+=j*trend[j];
+        SigmaX2+=j*j;
+        SigmaY+=trend[j];
+        n++;
 #ifdef PRINTMEM
         Serial.println("Tendance " + String((j+1)) + "minutes : " + String(trend[j]) + " Raw : " + String(raw));
 #endif        
-        MeanTrend+=trend[j];
      }
-    MeanTrend = MeanTrend/16;
 
 #ifdef PRINTMEM
     for (int j=0; j<32;j++) {
       raw = (NfcMem[NFC8HOURADDRESS + 1 + ((histoPointer+31-j)%32)*6]<<8) + NfcMem[NFC8HOURADDRESS + ((histoPointer+31-j)%32)*6];
-      Serial.println("Tendance " + String((j+1)/4) + "h"+ String((j*15+15)%60) + "min : " + String(Glucose_Reading(raw)) + " Raw : " + String(raw));
+      Serial.println("Tendance1 " + String((j+1)/4) + "h"+ String((j*15+15)%60) + "min : " + String(Glucose_Reading(raw)) + " Raw : " + String(raw));
     }
 #endif        
        
-   float SigmaY = 0 ;
-   for (int i = 0 ; i < 16 ; i++) { // Calcul droite avec regression des moindres carrés
-       // pour les absisses, i=0 à 15 ; moyenne = 7.5 ; SigmaX = somme((i-7.5)^2) = 340
-       SigmaY += (trend[i]-MeanTrend)*(i-7.5);
-   }
    // Valeur lissée par la droite des moindres carrés en considérant les 15 dernière minutes comme linéaire
-   // y = A x + B avec A = SigmaY/SigmaX et B =MoyenneY - A MoyenneX
+   // y = A x + B avec A = (n*SigmaXY - SigmaX*SigmaY)/(n*SigmaX2 - SigmaX*SigmaX) et B =MoyenneY - A MoyenneX = (SigmaY - A*SigmaX)/n
    // Valeur renvoyée correspond à l'estimation pour x = 0, la valeur courante lue est remplacée par son estimation selon la droite des moindres carrés
 
-    shownGlucose = MeanTrend - 7.5 * SigmaY/340;
+    A = (n*SigmaXY - SigmaX*SigmaY)/(n*SigmaX2 - SigmaX*SigmaX);
+    B = (SigmaY - A*SigmaX)/n;
+
+    sortArray(valididx, 16, firstIsLarger);
+    /*
+    for (int j=0; j<16; j++) {    
+      Serial.println(String(valididx[j]) + " " + String((trend[valididx[j]] - A * valididx[j] -B)*(trend[valididx[j]] - A * valididx[j] -B)));
+      delay(20);
+    }
+  */
+    Serial.println("Projection moindre carrés 1 : " + String(B));
+    Serial.println("Pente 1 : " + String(A) + " Moyenne : " + String(SigmaY/n));
+    Serial.println("Ecart 1 : " + String((B-trend[0])));
+
+    Serial.print("Valeur exclues : ");
+    for(int j=16-NBEXRAW; j<16;j++)
+      Serial.print(valididx[j] + String(" "));
+    Serial.println();
+    
+    SigmaX=0;
+    SigmaY=0;
+    SigmaX2=0;
+    SigmaXY=0;
+    n = 0;
+     for (int j=0; j<(16-NBEXRAW); j++) {     
+        SigmaX+=valididx[j];
+        SigmaXY+=valididx[j]*trend[valididx[j]];
+        SigmaX2+=valididx[j]*valididx[j];
+        SigmaY+=trend[valididx[j]];
+        n++;   
+     }
+
+    A = (n*SigmaXY - SigmaX*SigmaY)/(n*SigmaX2 - SigmaX*SigmaX);
+    B = (SigmaY - A*SigmaX)/n;
+    shownGlucose = B;
 
     currentGlucose = trend[0];
 
     Serial.println("Projection moindre carrés : " + String(shownGlucose));
+    Serial.println("Pente : " + String(A) + " Moyenne : " + String(SigmaY/n));
     Serial.println("Ecart : " + String((shownGlucose-trend[0])));
    
     if (FirstRun == 1)
@@ -477,6 +505,15 @@ Serial.println("Read Memory");
 float Glucose_Reading(unsigned int val) {
         int bitmask = 0x0FFF;
         return ((val & bitmask) / 8.5);
+}
+
+
+bool firstIsLarger(int first, int second) {
+  if ((trend[first] - A * first -B)*(trend[first] - A * first -B) > (trend[second] - A * second -B)*(trend[second] - A * second -B)) {
+    return true;
+  } else {
+    return false;
+  }
 }
 
 String Build_Packet(float glucose) {
