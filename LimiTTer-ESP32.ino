@@ -31,6 +31,7 @@
 #define PRINTMEM
 
 #include <SPI.h>
+#include "ArduinoSort.h"
 //#include <SoftwareSerial.h>
 #ifdef ESP32
 //#include "BluetoothSerial.h" //Header File for Serial Bluetooth, will be added by default into Arduino
@@ -57,7 +58,7 @@
 #define NFC15MINADDRESS 28  // 0x1C
 #define NFC8HOURADDRESS 124 // 0x64
 #define NFCSENSORTIMEPOINTER  316 // 0x13C et 0x13D
-
+#define NBEXRAW  5 // Exclus les NBEXRAW valeur dont l'écart type est maximal par rapport à la droite des moindres carré
 byte RXBuffer[RXBUFSIZE];
 byte NfcMem[NFCMEMSIZE];
 
@@ -68,7 +69,8 @@ long batteryMv;
 int noDiffCount = 0;
 int sensorMinutesElapse;
 float trend[16];
-
+float A = 0;
+float B = 0;
 
 
 #ifdef ESP8266
@@ -94,7 +96,7 @@ const int NFCPin3 = 21; // Power pin BM019
 const int NFCPin4 = 22; // Power pin BM019
 const int MOSIPin = 23;
 const int SCKPin = 19;
-unsigned long boottime;
+//unsigned long boottime;
 unsigned long sleeptime;
 RTC_DATA_ATTR int bootCount = 0;
 RTC_DATA_ATTR byte FirstRun = 1;
@@ -146,21 +148,7 @@ class CharacteristicUART : public BLECharacteristicCallbacks
 
 void setup() {
 //    boottime = millis();
-    pinMode(IRQPin, OUTPUT);
-    digitalWrite(IRQPin, HIGH); 
-    pinMode(SSPin, OUTPUT);
-    digitalWrite(SSPin, HIGH);
-    pinMode(NFCPin1, OUTPUT);
-    pinMode(NFCPin2, OUTPUT);
-    pinMode(NFCPin3, OUTPUT);
-    pinMode(NFCPin4, OUTPUT);
-    digitalWrite(NFCPin1, HIGH);
-    digitalWrite(NFCPin2, HIGH);
-    digitalWrite(NFCPin3, HIGH);
-    digitalWrite(NFCPin4, HIGH);
-
-    pinMode(MOSIPin, OUTPUT);
-    pinMode(SCKPin, OUTPUT);
+    BM19PowerOn();
 
     Serial.begin(9600);
 #ifdef ESP32
@@ -182,27 +170,10 @@ void setup() {
   pServer->getAdvertising()->start();
   //BLEAdvertising *pAdvertising = pServer->getAdvertising();
   //pAdvertising->start();
-  Serial.println("UART Over BLE start advertising");
-  Serial.println("UART Over BLE wait connection");
-    for (int i=0; ( (i < MAX_BLE_WAIT) && !estConnecte ); i++)
-    {
-      delay(1000);
-      Serial.println("Waiting for BLE connection ...");
-    }
+  //Serial.println("UART Over BLE start advertising");
 #endif
 
-    SPI.setDataMode(SPI_MODE0);
-    SPI.setBitOrder(MSBFIRST);
-    SPI.setClockDivider(SPI_CLOCK_DIV128);
-    SPI.begin();
 
-    delay(10);                      // send a wake up
-    digitalWrite(IRQPin, LOW);      // pulse to put the 
-    delayMicroseconds(100);         // BM019 into SPI
-    digitalWrite(IRQPin, HIGH);     // mode 
-    delay(10);
-    digitalWrite(IRQPin, LOW);
-    
      //Increment boot number and print it every reboot
 ////    ++bootCount;
 ////    Serial.println("Boot number: " + String(bootCount));
@@ -218,6 +189,50 @@ void Shift_RXBuf(int LastLSb) {
   }
 }
 #endif
+
+void BM19PowerOn()
+{
+    pinMode(IRQPin, OUTPUT);
+    digitalWrite(IRQPin, HIGH); 
+    pinMode(SSPin, OUTPUT);
+    digitalWrite(SSPin, HIGH);
+    pinMode(NFCPin1, OUTPUT);
+    pinMode(NFCPin2, OUTPUT);
+    pinMode(NFCPin3, OUTPUT);
+    pinMode(NFCPin4, OUTPUT);
+    digitalWrite(NFCPin1, HIGH);
+    digitalWrite(NFCPin2, HIGH);
+    digitalWrite(NFCPin3, HIGH);
+    digitalWrite(NFCPin4, HIGH);
+
+    pinMode(MOSIPin, OUTPUT);
+    pinMode(SCKPin, OUTPUT);
+
+    SPI.setDataMode(SPI_MODE0);
+    SPI.setBitOrder(MSBFIRST);
+    SPI.setClockDivider(SPI_CLOCK_DIV128);
+    SPI.begin();
+
+    delay(10);                      // send a wake up
+    digitalWrite(IRQPin, LOW);      // pulse to put the 
+    delayMicroseconds(100);         // BM019 into SPI
+    digitalWrite(IRQPin, HIGH);     // mode 
+    delay(10);
+    digitalWrite(IRQPin, LOW);
+    
+}
+
+void BM19PowerOff()
+{
+ SPI.end();
+ digitalWrite(MOSIPin, LOW);
+ digitalWrite(SCKPin, LOW);
+ digitalWrite(NFCPin1, LOW); // Turn off all power sources completely
+ digitalWrite(NFCPin2, LOW); // for maximum power save on BM019.
+ digitalWrite(NFCPin3, LOW);
+ digitalWrite(NFCPin4, LOW);
+ digitalWrite(IRQPin, LOW);
+}
 
 void poll_NFC_UntilResponsIsReady()
 {
@@ -303,8 +318,11 @@ void Inventory_Command() {
 
   poll_NFC_UntilResponsIsReady();
   receive_NFC_Response();
+//  Serial.println("RxBuf 0 : " + String(RXBuffer[0]));
+//  Serial.println("RxBuf 1 : " + String(RXBuffer[1]));
+  
 
-  if (RXBuffer[0] == 0x80 && RXBuffer[1] == 13 )  // is response code good?
+  if (RXBuffer[0] == 0x80 )  // is response code good?
     {
 
 #ifdef PRINTMEM  
@@ -337,29 +355,16 @@ void Inventory_Command() {
  
 float Read_Memory() {
 Serial.println("Read Memory");
- byte oneBlock[8];
- String hexPointer = "";
- String trendValues = "";
- String hexMinutes = "";
- String elapsedMinutes = "";
- float trendOneGlucose;
- float trendTwoGlucose;
  float currentGlucose;
  float shownGlucose;
- float averageGlucose = 0;
  int glucosePointer;
  int histoPointer;
- int validTrendCounter = 0;
  int raw;
- float validTrend[16];
  byte readError = 0;
  int readTry;
+ int valididx[16];
  
-#ifdef PRINTMEM    
  for ( int b = 3; b < 40; b++) {
-#else
- for ( int b = 3; b < 16; b++) {
-#endif
   readTry = 0;
   do {
     readError = 0;   
@@ -380,120 +385,93 @@ Serial.println("Read Memory");
        readError = 1;  
     
    for (int i = 0; i < 8; i++) {
-     oneBlock[i] = RXBuffer[i+3];
      NfcMem[8*b+i]=RXBuffer[i+3];
    }
-    char str[24];
-    unsigned char * pin = oneBlock;
-    const char * hex = "0123456789ABCDEF";
-    char * pout = str;
-    for(; pin < oneBlock+8; pout+=2, pin++) {
-        pout[0] = hex[(*pin>>4) & 0xF];
-        pout[1] = hex[ *pin     & 0xF];
-    }
-    pout[0] = 0;
-    if (!readError)       // is response code good?
-    { 
-#ifdef PRINTMEM  
-//      Serial.println(String(str) + " Bloc " + String(b));
-#endif      
-      trendValues += str;
-    }
     readTry++;
   } while( (readError) && (readTry < MAX_NFC_READTRIES) );
   
  }
-  readTry = 0;
-  do {
-  readError = 0;  
-  digitalWrite(SSPin, LOW);
-  SPI.transfer(0x00);  // SPI control byte to send command to CR95HF
-  SPI.transfer(0x04);  // Send Receive CR95HF command
-  SPI.transfer(0x03);  // length of data that follows
-  SPI.transfer(0x02);  // request Flags byte
-  SPI.transfer(0x20);  // Read Single Block command for ISO/IEC 15693
-  SPI.transfer(39);  // memory block address
-  digitalWrite(SSPin, HIGH);
-  delay(10);
- 
-  poll_NFC_UntilResponsIsReady();
-
-  receive_NFC_Response();
-
- if (RXBuffer[0] != 0x80)
-     readError = 1;  
-  
- for (int i = 0; i < 8; i++)
-   oneBlock[i] = RXBuffer[i+3];
-    
-  char str[24];
-  unsigned char * pin = oneBlock;
-  const char * hex = "0123456789ABCDEF";
-  char * pout = str;
-  for(; pin < oneBlock+8; pout+=2, pin++) {
-      pout[0] = hex[(*pin>>4) & 0xF];
-      pout[1] = hex[ *pin     & 0xF];
-  }
-  pout[0] = 0;
-  if (!readError) {
-    Serial.println("Bloc 39 : " + String(str));
-    elapsedMinutes += str;
-  }
-  readTry++;
-  } while( (readError) && (readTry < MAX_NFC_READTRIES) );
-
-//Serial.println("ElapsedMinutes " + elapsedMinutes);
-//Serial.println("trendValues " + trendValues);
       
   if (!readError)
     {
-      hexMinutes = elapsedMinutes.substring(10,12) + elapsedMinutes.substring(8,10);
-      hexPointer = trendValues.substring(4,6);
-//      sensorMinutesElapse = strtoul(hexMinutes.c_str(), NULL, 16);
-//      glucosePointer = strtoul(hexPointer.c_str(), NULL, 16);
-
       sensorMinutesElapse = (NfcMem[NFCSENSORTIMEPOINTER+1]<<8) + NfcMem[NFCSENSORTIMEPOINTER];
       glucosePointer = NfcMem[NFC15MINPOINTER];
       histoPointer=NfcMem[NFC8HOURPOINTER];
-
-Serial.println("hexMinutes : " + hexMinutes + " " + String(sensorMinutesElapse));
-Serial.println("Glucose Pointer  : " + String(glucosePointer));
-Serial.println("Histo Pointer  : " + String(histoPointer));
-
-    float MeanTrend=0;
-    float PenteFinale;
-
+#ifdef PRINTMEM
+    Serial.println("Glucose Pointer  : " + String(glucosePointer));
+    Serial.println("Histo Pointer  : " + String(histoPointer));
+#endif
+    float SigmaX=0;
+    float SigmaY=0;
+    float SigmaX2=0;
+    float SigmaXY=0;
+    int n = 0;
 
      for (int j=0; j<16; j++) {     
          raw = (NfcMem[NFC15MINADDRESS + 1 + ((glucosePointer+15-j)%16)*6]<<8) + NfcMem[NFC15MINADDRESS + ((glucosePointer+15-j)%16)*6];
-//         trend[15-j] = Glucose_Reading((NfcMem[NFC15MINADDRESS + 1 + ((glucosePointer+j)%16)*6]<<8) + NfcMem[NFC15MINADDRESS + ((glucosePointer+j)%16)*6]) ;
         trend[j] = Glucose_Reading(raw) ;
+        valididx[j] = j;
+        SigmaX+=j;
+        SigmaXY+=j*trend[j];
+        SigmaX2+=j*j;
+        SigmaY+=trend[j];
+        n++;
+#ifdef PRINTMEM
         Serial.println("Tendance " + String((j+1)) + "minutes : " + String(trend[j]) + " Raw : " + String(raw));
-        MeanTrend+=trend[j];
+#endif        
      }
-    MeanTrend = MeanTrend/16;
 
+#ifdef PRINTMEM
     for (int j=0; j<32;j++) {
       raw = (NfcMem[NFC8HOURADDRESS + 1 + ((histoPointer+31-j)%32)*6]<<8) + NfcMem[NFC8HOURADDRESS + ((histoPointer+31-j)%32)*6];
-      Serial.println("Tendance " + String((j+1)/4) + "h"+ String((j*15+15)%60) + "min : " + String(Glucose_Reading(raw)) + " Raw : " + String(raw));
+      Serial.println("Tendance1 " + String((j+1)/4) + "h"+ String((j*15+15)%60) + "min : " + String(Glucose_Reading(raw)) + " Raw : " + String(raw));
     }
-
-
+#endif        
        
-   float SigmaY = 0 ;
-   for (int i = 0 ; i < 16 ; i++) { // Calcul droite avec regression des moindres carrés
-       // pour les absisses, i=0 à 15 ; moyenne = 7.5 ; SigmaX = somme((i-7.5)^2) = 340
-       SigmaY += (trend[i]-MeanTrend)*(i-7.5);
-   }
    // Valeur lissée par la droite des moindres carrés en considérant les 15 dernière minutes comme linéaire
-   // y = A x + B avec A = SigmaY/SigmaX et B =MoyenneY - A MoyenneX
+   // y = A x + B avec A = (n*SigmaXY - SigmaX*SigmaY)/(n*SigmaX2 - SigmaX*SigmaX) et B =MoyenneY - A MoyenneX = (SigmaY - A*SigmaX)/n
    // Valeur renvoyée correspond à l'estimation pour x = 0, la valeur courante lue est remplacée par son estimation selon la droite des moindres carrés
 
-   shownGlucose = MeanTrend - 7.5 * SigmaY/340;
+    A = (n*SigmaXY - SigmaX*SigmaY)/(n*SigmaX2 - SigmaX*SigmaX);
+    B = (SigmaY - A*SigmaX)/n;
+
+    sortArray(valididx, 16, firstIsLarger);
+    /*
+    for (int j=0; j<16; j++) {    
+      Serial.println(String(valididx[j]) + " " + String((trend[valididx[j]] - A * valididx[j] -B)*(trend[valididx[j]] - A * valididx[j] -B)));
+      delay(20);
+    }
+  */
+    Serial.println("Projection moindre carrés 1 : " + String(B));
+    Serial.println("Pente 1 : " + String(A) + " Moyenne : " + String(SigmaY/n));
+    Serial.println("Ecart 1 : " + String((B-trend[0])));
+
+    Serial.print("Valeur exclues : ");
+    for(int j=16-NBEXRAW; j<16;j++)
+      Serial.print(valididx[j] + String(" "));
+    Serial.println();
+    
+    SigmaX=0;
+    SigmaY=0;
+    SigmaX2=0;
+    SigmaXY=0;
+    n = 0;
+     for (int j=0; j<(16-NBEXRAW); j++) {     
+        SigmaX+=valididx[j];
+        SigmaXY+=valididx[j]*trend[valididx[j]];
+        SigmaX2+=valididx[j]*valididx[j];
+        SigmaY+=trend[valididx[j]];
+        n++;   
+     }
+
+    A = (n*SigmaXY - SigmaX*SigmaY)/(n*SigmaX2 - SigmaX*SigmaX);
+    B = (SigmaY - A*SigmaX)/n;
+    shownGlucose = B;
 
     currentGlucose = trend[0];
 
     Serial.println("Projection moindre carrés : " + String(shownGlucose));
+    Serial.println("Pente : " + String(A) + " Moyenne : " + String(SigmaY/n));
     Serial.println("Ecart : " + String((shownGlucose-trend[0])));
    
     if (FirstRun == 1)
@@ -505,51 +483,6 @@ Serial.println("Histo Pointer  : " + String(histoPointer));
     if (lastGlucose != currentGlucose) // Reset the counter
       noDiffCount = 0;
     
-/*    
-       
-    if (((lastGlucose - currentGlucose) > 50) || ((currentGlucose - lastGlucose) > 50))
-    {
-       if (((lastGlucose - trendOneGlucose) > 50) || ((trendOneGlucose - lastGlucose) > 50))
-          currentGlucose = trendTwoGlucose;
-       else
-          currentGlucose = trendOneGlucose;
-    }
-
-    for (int i=0; i<16; i++)
-    {
-      if (((lastGlucose - trend[i]) > 50) || ((trend[i] - lastGlucose) > 50)) // invalid trend check
-         continue;
-      else
-      {
-         validTrend[validTrendCounter] = trend[i];
-         validTrendCounter++;
-      }
-    }
-
-    if (validTrendCounter > 0)
-    { 
-      for (int i=0; i < validTrendCounter; i++)
-         averageGlucose += validTrend[i];
-         
-      averageGlucose = averageGlucose / validTrendCounter;
-      
-      if (((lastGlucose - currentGlucose) > 50) || ((currentGlucose - lastGlucose) > 50))
-         shownGlucose = averageGlucose; // If currentGlucose is still invalid take the average value
-      else
-         shownGlucose = currentGlucose; // All went well. Take and show the current value
-    }
-    else
-      shownGlucose = currentGlucose; // If all is going wrong, nevertheless take and show a value 
-
-    if ((lastGlucose == currentGlucose) && (sensorMinutesElapse > 21000)) // Expired sensor check
-      noDiffCount++;
-
-    if (lastGlucose != currentGlucose) // Reset the counter
-      noDiffCount = 0;
-
-    if (currentGlucose != 0)
-      lastGlucose = currentGlucose; 
-*/
     
     NFCReady = 2;
     FirstRun = 0;
@@ -574,6 +507,15 @@ float Glucose_Reading(unsigned int val) {
         return ((val & bitmask) / 8.5);
 }
 
+
+bool firstIsLarger(int first, int second) {
+  if ((trend[first] - A * first -B)*(trend[first] - A * first -B) > (trend[second] - A * second -B)*(trend[second] - A * second -B)) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
 String Build_Packet(float glucose) {
   Serial.println("Build Packet");
   
@@ -590,21 +532,10 @@ String Build_Packet(float glucose) {
       packet += String(sensorMinutesElapse);
       Serial.print("Glucose level: ");
       Serial.println(glucose);
-      /*
-      Serial.println("15 minutes-trend: ");
-      for (int i=0; i<16; i++)
-      {
-        Serial.println(String(trend[i]));
-      }
-      Serial.print("Battery level: ");
-      Serial.print(batteryPcnt);
-      Serial.println("%");
-      */
       delay(100);
       Serial.print("Sensor lifetime: ");
       Serial.print(sensorMinutesElapse);
       Serial.println(" minutes elapsed");
-      Serial.println("Packet sent : " + packet);
       return packet;
 }
 
@@ -612,36 +543,44 @@ void Send_Packet(String packet) {
    if ((packet.substring(0,1) != "0"))
     {
 #ifdef ESP32
-      int Packet_Size = packet.length() + 1;
-      char BlePacket[Packet_Size];
-      packet.toCharArray(BlePacket, Packet_Size);
-      pTxCharacteristic->setValue(BlePacket);
-      pTxCharacteristic->notify();     
+      Serial.println("UART Over BLE wait connection");
+      for (int i=0; ( (i < MAX_BLE_WAIT) && !estConnecte ); i++)
+      {
+        delay(1000);
+        Serial.println("Waiting for BLE connection ...");
+      }
+      if(estConnecte) {
+        int Packet_Size = packet.length() + 1;
+        char BlePacket[Packet_Size];
+        packet.toCharArray(BlePacket, Packet_Size);
+        delay(100); // small delay before sending first packet
+        pTxCharacteristic->setValue(BlePacket);
+        pTxCharacteristic->notify();  
+        Serial.println("Packet sent : " + packet);
+        delay(1000); // Send packet twice to avoid missing packet
+        pTxCharacteristic->setValue(BlePacket);
+        pTxCharacteristic->notify();  
+        Serial.println("Packet sent : " + packet);
+      } else {
+        Serial.println("Pb BLE connection, Packet not sent : " + packet);
+      }
 #endif      
-      delay(500);
+      delay(100);
     }
    else
     {
       Serial.println("");
       Serial.print("Packet not sent! Maybe a corrupt scan or an expired sensor.");
       Serial.println("");
-      delay(500);
+      delay(100);
     }
   }
 
 void goToSleep() {
- 
- SPI.end();
- digitalWrite(MOSIPin, LOW);
- digitalWrite(SCKPin, LOW);
- digitalWrite(NFCPin1, LOW); // Turn off all power sources completely
- digitalWrite(NFCPin2, LOW); // for maximum power save on BM019.
- digitalWrite(NFCPin3, LOW);
- digitalWrite(NFCPin4, LOW);
- digitalWrite(IRQPin, LOW);
+
 #ifdef ESP32
  sleeptime = millis();
- esp_sleep_enable_timer_wakeup(SLEEP_TIME - (sleeptime-boottime)*1000);
+ esp_sleep_enable_timer_wakeup(SLEEP_TIME - sleeptime*1000+1598000);
  esp_deep_sleep_start();
 #else
   delay(30000);
@@ -651,17 +590,7 @@ void goToSleep() {
   digitalWrite(NFCPin3, HIGH);
   digitalWrite(NFCPin4, HIGH);
 
-  SPI.setDataMode(SPI_MODE0);
-  SPI.setBitOrder(MSBFIRST);
-  SPI.setClockDivider(SPI_CLOCK_DIV128);
-  SPI.begin();
-
-  delay(10);                      // send a wake up
-  digitalWrite(IRQPin, LOW);      // pulse to put the 
-  delayMicroseconds(100);         // BM019 into SPI
-  digitalWrite(IRQPin, HIGH);     // mode 
-  delay(10);
-  digitalWrite(IRQPin, LOW);
+  BM19PowerOn();
   NFCReady = 0;
 #endif
 
@@ -682,15 +611,17 @@ batteryPcnt=100;
       Inventory_Command(); // sensor in range?
       if (NFCReady == 2)
         break;
-      delay(1000);
+      delay(100);
     }
     if (NFCReady == 1) {
+      BM19PowerOff();
       goToSleep();
     }
   }
   else
   {
     String xdripPacket = Build_Packet(Read_Memory());
+    BM19PowerOff();
     Send_Packet(xdripPacket);
     goToSleep();
   }
