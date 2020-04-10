@@ -424,7 +424,7 @@ Serial.println("Read Memory");
 #ifdef PRINTMEM
     for (int j=0; j<32;j++) {
       raw = (NfcMem[NFC8HOURADDRESS + 1 + ((histoPointer+31-j)%32)*6]<<8) + NfcMem[NFC8HOURADDRESS + ((histoPointer+31-j)%32)*6];
-      Serial.println("Tendance1 " + String((j+1)/4) + "h"+ String((j*15+15)%60) + "min : " + String(Glucose_Reading(raw)) + " Raw : " + String(raw));
+      Serial.println("Tendance " + String((j+1)/4) + "h"+ String((j*15+15)%60) + "min : " + String(Glucose_Reading(raw)) + " Raw : " + String(raw));
     }
 #endif        
        
@@ -443,12 +443,12 @@ Serial.println("Read Memory");
     }
   */
     Serial.println("Projection moindre carrés 1 : " + String(B));
-    Serial.println("Pente 1 : " + String(A) + " Moyenne : " + String(SigmaY/n));
+    Serial.println("Pente 1 : " + String(-A) + " Moyenne : " + String(SigmaY/n));
     Serial.println("Ecart 1 : " + String((B-trend[0])));
 
     Serial.print("Valeur exclues : ");
     for(int j=16-NBEXRAW; j<16;j++)
-      Serial.print(valididx[j] + String(" "));
+      Serial.print(String(valididx[j]+1) + String(" "));
     Serial.println();
     
     SigmaX=0;
@@ -471,8 +471,8 @@ Serial.println("Read Memory");
     currentGlucose = trend[0];
 
     Serial.println("Projection moindre carrés : " + String(shownGlucose));
-    Serial.println("Pente : " + String(A) + " Moyenne : " + String(SigmaY/n));
-    Serial.println("Ecart : " + String((shownGlucose-trend[0])));
+    Serial.println("Pente 2 : " + String(-A) + " Moyenne : " + String(SigmaY/n));
+    Serial.println("Ecart 2 : " + String((shownGlucose-trend[0])));
    
     if (FirstRun == 1)
        lastGlucose = trend[0];
